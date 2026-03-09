@@ -1,36 +1,30 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:mongo_dart/mongo_dart.dart';
+import 'package:mongo_dart/mongo_dart.dart' show ObjectId; // Spesifik import
 import 'package:logbook_app_001/features/models/log_model.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:logbook_app_001/services/mongo_service.dart';
+import 'package:logbook_app_001/services/access_control_services.dart' as AccessControl;
 import 'package:logbook_app_001/helpers/log_helper.dart';
 
 class LogController {
-  // Notifier utama untuk data asli
-  final ValueNotifier<List<LogModel>> logsNotifier =
-      ValueNotifier<List<LogModel>>([]);
+  // Notifier untuk UI
+  final ValueNotifier<List<LogModel>> logsNotifier = ValueNotifier<List<LogModel>>([]);
+  final ValueNotifier<List<LogModel>> filteredLogsNotifier = ValueNotifier<List<LogModel>>([]);
+  
+  // Akses Box Hive (Gunakan nama yang sama dengan di main.dart)
+  final Box<LogModel> _logBox = Hive.box<LogModel>('offline_logs');
 
-  // PERBAIKAN: Inisialisasi notifier untuk pencarian agar tidak null
-  final ValueNotifier<List<LogModel>> filteredLogsNotifier =
-      ValueNotifier<List<LogModel>>([]);
-
+  // Identitas User (Harus diisi saat login atau inisialisasi)
+  String userId = "";
+  String userRole = "";
   String lastQuery = "";
-
-  // PERBAIKAN: Tambahkan kunci storage yang hilang
-  static const String _storageKey = 'user_logs_data';
-
-  List<LogModel> get logs => logsNotifier.value;
 
   LogController() {
     loadFromDisk();
-    // Setiap kali logsNotifier berubah, filter otomatis dijalankan
-    logsNotifier.addListener(() {
-      _applyFilter();
-    });
+    logsNotifier.addListener(() => _applyFilter());
   }
 
-  // Fungsi pencarian untuk dipanggil dari UI
   void searchLogs(String query) {
     lastQuery = query;
     _applyFilter();
@@ -41,164 +35,120 @@ class LogController {
       filteredLogsNotifier.value = logsNotifier.value;
     } else {
       filteredLogsNotifier.value = logsNotifier.value
-          .where(
-            (log) =>
-                log.title.toLowerCase().contains(lastQuery.toLowerCase()) ||
-                log.description.toLowerCase().contains(lastQuery.toLowerCase()),
-          )
+          .where((log) =>
+              log.title.toLowerCase().contains(lastQuery.toLowerCase()) ||
+              log.description.toLowerCase().contains(lastQuery.toLowerCase()))
           .toList();
     }
   }
 
-  // 1. Menambah data
-  Future<void> addLog(String title, String desc, String kategori) async {
+  // --- CRUD OPERATIONS ---
+
+  Future<void> addLog(String title, String desc, String kategori, String authorId, String teamId) async {
     final newLog = LogModel(
       id: ObjectId(),
       title: title,
       description: desc,
       kategori: kategori,
       date: DateTime.now(),
+      authorId: authorId,
+      teamId: teamId,
     );
 
     try {
+      // 1. Simpan Lokal Dulu (Hive) - Instant UI update
+      await _logBox.add(newLog);
+      _updateLocalList();
+
+      // 2. Coba kirim ke Cloud
       await MongoService().insertLog(newLog);
-
-      final currentLogs = List<LogModel>.from(logsNotifier.value);
-      currentLogs.add(newLog);
-
-      // PERBAIKAN: Update state dan simpan ke disk di dalam blok try
-      logsNotifier.value = currentLogs;
-      await saveToDisk();
-
-      await LogHelper.writeLog(
-        "SUCCESS: Tambah data Berhasil",
-        source: "log_controller.dart",
-      );
+      
+      await LogHelper.writeLog("SUCCESS: Data tersimpan di Cloud & Lokal", source: "log_controller.dart");
     } catch (e) {
-      await LogHelper.writeLog("ERROR: Gagal sinkronisasi Add - $e", level: 1);
+      await LogHelper.writeLog("OFFLINE: Tersimpan di lokal, gagal upload - $e", level: 3);
     }
   }
 
-  // 2. Memperbarui data
-  Future<void> updateLog(
-    int index,
-    String newTitle,
-    String newDesc,
-    String tempKategori,
-  ) async {
-    final currentLogs = List<LogModel>.from(logsNotifier.value);
-    final oldLog = currentLogs[index];
-
+  Future<void> updateLog(int index, String newTitle, String newDesc, String tempKategori) async {
+    final oldLog = logsNotifier.value[index];
     final updatedLog = LogModel(
       id: oldLog.id,
       title: newTitle,
       description: newDesc,
-      kategori: tempKategori, // Gunakan kategori baru dari dialog
+      kategori: tempKategori,
       date: DateTime.now(),
+      authorId: oldLog.authorId,
+      teamId: oldLog.teamId,
     );
 
     try {
+      // Update MongoDB
       await MongoService().updateLog(updatedLog);
 
-      currentLogs[index] = updatedLog;
-      logsNotifier.value = currentLogs;
-      await saveToDisk();
-
-      await LogHelper.writeLog(
-        "SUCCESS: Update Berhasil",
-        source: "log_controller.dart",
-        level: 2,
-      );
+      // Update Hive (Cari key berdasarkan objek lama)
+      final dynamic key = _logBox.keys.elementAt(index);
+      await _logBox.put(key, updatedLog);
+      
+      _updateLocalList();
     } catch (e) {
-      await LogHelper.writeLog(
-        "ERROR: Update Gagal - $e",
-        source: "log_controller.dart",
-        level: 1,
-      );
+      await LogHelper.writeLog("ERROR: Update Gagal - $e", level: 1);
     }
   }
 
-  // 3. Menghapus data (Sekarang menggunakan objek Log agar lebih aman)
   Future<void> removeLog(LogModel targetLog) async {
-    final currentLogs = List<LogModel>.from(logsNotifier.value);
+    // 1. Security Check
+    bool isOwner = targetLog.authorId == userId; 
+    if (!AccessControl.canDelete(userRole, isOwner: isOwner)) {
+      await LogHelper.writeLog("SECURITY: Unauthorized Delete", level: 1);
+      return;
+    }
 
     try {
-      if (targetLog.id == null) throw Exception("ID Log tidak ditemukan.");
+      if (targetLog.id == null) throw Exception("ID Null");
 
+      // 2. Hapus di Cloud
       await MongoService().deleteLog(targetLog.id!);
 
-      currentLogs.removeWhere((element) => element.id == targetLog.id);
-      logsNotifier.value = currentLogs;
-      await saveToDisk();
+      // 3. Hapus di Hive
+      final Map<dynamic, LogModel> map = _logBox.toMap();
+      final dynamic keyToDelete = map.keys.firstWhere(
+        (k) => map[k]?.id == targetLog.id,
+        orElse: () => null,
+      );
 
-      await LogHelper.writeLog(
-        "SUCCESS: Hapus Berhasil",
-        source: "log_controller.dart",
-        level: 2,
-      );
+      if (keyToDelete != null) {
+        await _logBox.delete(keyToDelete);
+        _updateLocalList();
+      }
+      
+      await LogHelper.writeLog("SUCCESS: Log dihapus", level: 2);
     } catch (e) {
-      await LogHelper.writeLog(
-        "ERROR: Hapus Gagal - $e",
-        source: "log_controller.dart",
-        level: 1,
-      );
+      await LogHelper.writeLog("ERROR: Hapus Gagal - $e", level: 1);
     }
   }
 
   // --- PERSISTENCE ---
 
-  Future<void> saveToDisk() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-
-      // PERBAIKAN: Sebelum jsonEncode, pastikan semua data menjadi tipe dasar (String/Int)
-      final List<Map<String, dynamic>> mappedData = logsNotifier.value.map((
-        log,
-      ) {
-        final map = log.toMap();
-        // Ubah ObjectId menjadi String Hex agar bisa masuk JSON
-        map['_id'] = (map['_id'] as ObjectId).toHexString();
-        // Ubah DateTime menjadi ISO String agar bisa masuk JSON
-        map['date'] = (map['date'] as DateTime).toIso8601String();
-        return map;
-      }).toList();
-
-      final String encodedData = jsonEncode(mappedData);
-      await prefs.setString(_storageKey, encodedData);
-
-      await LogHelper.writeLog(
-        "SUCCESS: Backup Lokal diperbarui",
-        source: "log_controller.dart",
-      );
-    } catch (e) {
-      await LogHelper.writeLog("ERROR: Gagal saveToDisk - $e", level: 1);
-    }
+  // Helper untuk sinkronisasi Notifier dengan data di Hive
+  void _updateLocalList() {
+    logsNotifier.value = _logBox.values.toList();
   }
 
-  // 2. Fungsi Load Data (Cloud & Lokal)
   Future<void> loadFromDisk() async {
     try {
-      // Coba ambil data terbaru dari Cloud
+      // 1. Selalu muat data lokal dulu agar UI cepat muncul
+      _updateLocalList();
+
+      // 2. Coba ambil data terbaru dari Cloud untuk refresh
       final cloudData = await MongoService().getLogs();
-      logsNotifier.value = cloudData;
-
-      // Update cache lokal setiap kali berhasil ambil dari Cloud
-      await saveToDisk();
+      
+      // 3. Update Hive dengan data terbaru dari Cloud (Clear & Re-add)
+      await _logBox.clear();
+      await _logBox.addAll(cloudData);
+      
+      _updateLocalList();
     } catch (e) {
-      // Jika Offline/Gagal Cloud, ambil dari SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final String? localData = prefs.getString(_storageKey);
-
-      if (localData != null) {
-        final List<dynamic> decoded = jsonDecode(localData);
-        // factory LogModel.fromMap Anda sudah bisa menangani konversi String ke ObjectId
-        logsNotifier.value = decoded.map((m) => LogModel.fromMap(m)).toList();
-      }
-
-      await LogHelper.writeLog(
-        "INFO: Berjalan dalam mode Offline/Local",
-        level: 2,
-      );
+      await LogHelper.writeLog("INFO: Berjalan dalam mode Offline", level: 2);
     }
   }
 }

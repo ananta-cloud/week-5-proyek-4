@@ -1,19 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:mongo_dart/mongo_dart.dart';
+import 'package:hive/hive.dart';
+import 'package:mongo_dart/mongo_dart.dart' show ObjectId;
 
+part 'log_model.g.dart';
+
+@HiveType(typeId: 0)
 class LogModel {
+  @HiveField(0)
   final ObjectId? id;
+  @HiveField(1)
   final String title;
+  @HiveField(2)
   final String description;
+  @HiveField(3)
   final String kategori;
+  @HiveField(4)
   final DateTime date;
+  @HiveField(5)
+  final String authorId; // Contoh: "MEKTRA_KLP_01"
+  @HiveField(6)
+  final String teamId; // Contoh: "MEKTRA_KLP_01"
 
   LogModel({
     this.id,
     required this.title,
-    required this.date,
     required this.description,
+    required this.date,
     required this.kategori,
+    required this.authorId,
+    required this.teamId,
   });
 
   Color get categoryColor {
@@ -37,6 +53,8 @@ class LogModel {
       'description': description,
       'kategori': kategori,
       'date': date,
+      'authorId': authorId,
+      'teamId': teamId,
     };
   }
 
@@ -52,6 +70,8 @@ class LogModel {
       date: map['date'] is DateTime
           ? map['date']
           : DateTime.parse(map['date'] ?? DateTime.now().toString()),
+      authorId: map['authorId'] ?? 'unknown_user', // Cegah error null
+      teamId: map['teamId'] ?? 'no_team',
     );
   }
 }

@@ -1,21 +1,56 @@
 import 'package:mongo_dart/mongo_dart.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:logbook_app_001/features/models/log_model.dart';
+import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:logbook_app_001/helpers/log_helper.dart';
 
 class MongoService {
   static final MongoService _instance = MongoService._internal();
   Db? _db;
+  // Filter di MongoService
   DbCollection? _collection;
   final String _source = "mongo_service.dart";
 
-  factory MongoService() => _instance;
-  MongoService._internal();
+  final ValueNotifier<bool> isOnline = ValueNotifier<bool>(true);
 
-  // Getter untuk mengecek status koneksi (berguna untuk test)
+  factory MongoService() => _instance;
+  MongoService._internal() {
+    // Inisialisasi listener koneksi saat service dibuat
+    _initConnectivityListener();
+  }
+
+  void _initConnectivityListener() {
+    Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> results,
+    ) {
+      // Jika list mengandung 'none', berarti offline
+      isOnline.value = !results.contains(ConnectivityResult.none);
+
+      if (!isOnline.value) {
+        LogHelper.writeLog(
+          "NETWORK: Perangkat Offline",
+          source: _source,
+          level: 3,
+        );
+      }
+    });
+  }
+
+  /// Fungsi helper untuk cek koneksi sebelum aksi dimulai
+  Future<void> _checkNetwork() async {
+    var result = await (Connectivity().checkConnectivity());
+    if (result.contains(ConnectivityResult.none)) {
+      isOnline.value = false;
+      throw Exception("Tidak ada koneksi internet.");
+    }
+    isOnline.value = true;
+  }
+
   Db? get db => _db;
 
   Future<DbCollection> _getSafeCollection() async {
+    await _checkNetwork(); // Pastikan koneksi sebelum akses database
     if (_db == null || !_db!.isConnected || _collection == null) {
       await LogHelper.writeLog(
         "INFO: Koleksi belum siap, mencoba rekoneksi...",
@@ -30,6 +65,7 @@ class MongoService {
   /// Inisialisasi Koneksi ke MongoDB Atlas
   Future<void> connect([String? uri]) async {
     try {
+      await _checkNetwork(); // Cek koneksi sebelum mencoba connect
       // Logika Fallback: Gunakan parameter jika ada, jika tidak gunakan .env
       final dbUri = (uri != null && uri.isNotEmpty)
           ? uri
@@ -65,17 +101,19 @@ class MongoService {
   }
 
   /// READ: Mengambil data dari Cloud
-  Future<List<LogModel>> getLogs() async {
+  Future<List<LogModel>> getLogs(String teamId) async {
     try {
       final collection = await _getSafeCollection(); // Gunakan jalur aman
 
       await LogHelper.writeLog(
-        "INFO: Fetching data from Cloud...",
+        "INFO: Fetching data for Team: $teamId",
         source: _source,
         level: 3,
       );
 
-      final List<Map<String, dynamic>> data = await collection.find().toList();
+      final List<Map<String, dynamic>> data = await collection
+          .find(where.eq('teamId', teamId))
+          .toList();
       return data.map((json) => LogModel.fromMap(json)).toList();
     } catch (e) {
       await LogHelper.writeLog(
@@ -83,8 +121,7 @@ class MongoService {
         source: _source,
         level: 1,
       );
-      // return [];
-      rethrow;
+      return [];
     }
   }
 
