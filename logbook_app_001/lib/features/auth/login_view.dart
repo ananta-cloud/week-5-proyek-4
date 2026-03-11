@@ -25,7 +25,7 @@ class _LoginViewState extends State<LoginView> {
         context,
         MaterialPageRoute(
           // builder: (context) => CounterView(user: loggedInUser),
-          builder: (context) => LogView(user: loggedInUser),
+          builder: (context) => LogView(currentUser: loggedInUser),
         ),
       );
     } else {

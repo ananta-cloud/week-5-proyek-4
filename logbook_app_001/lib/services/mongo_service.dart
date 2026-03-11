@@ -37,6 +37,7 @@ class MongoService {
     });
   }
 
+
   /// Fungsi helper untuk cek koneksi sebelum aksi dimulai
   Future<void> _checkNetwork() async {
     var result = await (Connectivity().checkConnectivity());
@@ -124,6 +125,7 @@ class MongoService {
       return [];
     }
   }
+
 
   /// CREATE: Menambahkan data baru
   Future<void> insertLog(LogModel log) async {

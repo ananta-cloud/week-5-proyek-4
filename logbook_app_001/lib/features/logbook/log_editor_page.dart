@@ -45,14 +45,14 @@ class _LogEditorPageState extends State<LogEditorPage> {
       widget.controller.addLog(
         _titleController.text,
         _descController.text,
-        "Kerja", // Default kategori, bisa diubah nanti dengan dropdown
         widget.currentUser['uid'],
         widget.currentUser['teamId'],
+        DateTime.now().toString(),
       );
     } else {
       // Update
       widget.controller.updateLog(
-        widget.index!,
+        widget.log!,
         _titleController.text,
         _descController.text,
         widget.currentUser['uid'],
