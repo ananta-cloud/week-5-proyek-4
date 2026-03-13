@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'log_controller.dart';
-import '../models/log_model.dart';
-import '../auth/login_view.dart';
-import '../widgets/search_log.dart';
-import '../widgets/empty_log.dart';
-import 'log_editor_page.dart';
-import '../../services/mongo_service.dart';
-import '../../services/access_control_services.dart';
-import '../../helpers/log_helper.dart';
+import 'package:logbook_app_001/features/logbook/log_controller.dart';
+import 'package:logbook_app_001/features/models/log_model.dart';
+import 'package:logbook_app_001/services/access_control_services.dart';
+import 'package:logbook_app_001/features/logbook/log_editor_page.dart';
+import 'package:logbook_app_001/features/auth/login_view.dart';
+import 'package:logbook_app_001/services/mongo_service.dart';
+import 'package:logbook_app_001/features/widgets/search_log.dart';
 
 class LogView extends StatefulWidget {
   final dynamic currentUser;
@@ -21,52 +19,45 @@ class LogView extends StatefulWidget {
 
 class _LogViewState extends State<LogView> {
   late LogController _controller;
-  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
     _controller = LogController();
-    
-    // Sinkronisasi identitas user ke controller
-    _controller.userId = widget.currentUser['uid'] ?? "";
-    _controller.userRole = widget.currentUser['role'] ?? "Anggota";
 
-    _initDatabase();
+    // Inisialisasi data berdasarkan pengguna yang login
+    String teamId = widget.currentUser['teamId'] ?? "";
+    String uid = widget.currentUser['uid'] ?? "";
+    String role = widget.currentUser['role'] ?? "Anggota";
 
-    // Listener status online untuk update ikon cloud di AppBar
+    _initDatabase(teamId, uid, role);
+
+    // Listener untuk update ikon cloud secara real-time
     MongoService().isOnline.addListener(() {
       if (mounted) setState(() {});
     });
   }
 
-  Future<void> _initDatabase() async {
-    setState(() => _isLoading = true);
+  Future<void> _initDatabase(String teamId, String uid, String role) async {
     try {
       final String? mongoUri = dotenv.env['MONGODB_URI'];
-      if (mongoUri == null) throw Exception("MONGODB_URI tidak ditemukan");
-
-      // Pastikan koneksi cloud terjalin
-      await MongoService().connect(mongoUri).timeout(
-            const Duration(seconds: 15),
-          );
-
-      // Muat data dari Disk (Hive) lalu sinkron ke Cloud
-      await _controller.loadFromDisk(widget.currentUser['teamId']);
+      if (mongoUri != null) {
+        await MongoService().connect(mongoUri);
+      }
     } catch (e) {
-      await LogHelper.writeLog("UI: Init Error - $e", level: 1);
+      print("Koneksi cloud gagal, beralih ke offline penuh");
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      // Selalu muat data lokal (Offline-First)
+      _controller.loadLogs(teamId, uid, role);
     }
   }
 
-  void _goToEditor({LogModel? log, int? index}) {
+  void _goToEditor({LogModel? log}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => LogEditorPage(
           log: log,
-          index: index,
           controller: _controller,
           currentUser: widget.currentUser,
         ),
@@ -74,8 +65,23 @@ class _LogViewState extends State<LogView> {
     );
   }
 
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'Mechanical':
+        return Colors.green.shade100;
+      case 'Electronic':
+        return Colors.blue.shade100;
+      case 'Software':
+        return Colors.purple.shade100;
+      default:
+        return Colors.grey.shade100;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final String role = widget.currentUser['role'] ?? 'Anggota';
+
     return Scaffold(
       appBar: AppBar(
         title: Text("Logbook: ${widget.currentUser['username']}"),
@@ -83,78 +89,105 @@ class _LogViewState extends State<LogView> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => _controller.loadFromDisk(widget.currentUser['teamId']),
+            onPressed: () => _controller.loadLogs(
+              widget.currentUser['teamId'],
+              widget.currentUser['uid'],
+              role,
+            ),
           ),
           ValueListenableBuilder<bool>(
             valueListenable: MongoService().isOnline,
-            builder: (context, online, _) {
-              return Icon(
-                online ? Icons.cloud_done : Icons.cloud_off,
-                color: online ? Colors.green : Colors.red,
-              );
-            },
+            builder: (context, online, _) => Icon(
+              online ? Icons.cloud_done : Icons.cloud_off,
+              color: online ? Colors.green : Colors.red,
+            ),
           ),
           const SizedBox(width: 8),
-          IconButton(icon: const Icon(Icons.logout), onPressed: _showLogoutConfirmation),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const LoginView()),
+              (route) => false,
+            ),
+          ),
         ],
       ),
       body: Column(
         children: [
-          // Widget pencarian tetap dipertahankan
           SearchBarWidget(onSearch: (value) => _controller.searchLogs(value)),
-          
           Expanded(
             child: ValueListenableBuilder<List<LogModel>>(
               valueListenable: _controller.filteredLogsNotifier,
-              builder: (context, logs, _) {
-                if (_isLoading && logs.isEmpty) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
+              builder: (context, logs, child) {
                 if (logs.isEmpty) {
-                  return const EmptyLog(isSearchMode: false);
+                  return const Center(
+                    child: Text(
+                      "Belum ada aktivitas hari ini? Mulai catat kemajuan Anda!",
+                    ),
+                  );
                 }
 
-                return RefreshIndicator(
-                  onRefresh: () async => await _controller.loadFromDisk(widget.currentUser['teamId']),
-                  child: ListView.builder(
-                    itemCount: logs.length,
-                    itemBuilder: (context, index) {
-                      final log = logs[index];
-                      final bool isOwner = log.authorId == widget.currentUser['uid'];
-                      final String role = widget.currentUser['role'] ?? 'Anggota';
+                return ListView.builder(
+                  itemCount: logs.length,
+                  itemBuilder: (context, index) {
+                    final log = logs[index];
+                    final bool isOwner =
+                        log.authorId == widget.currentUser['uid'];
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        child: ListTile(
-                          leading: Icon(
-                            log.id != null ? Icons.cloud_done : Icons.cloud_upload_outlined,
-                            color: log.id != null ? Colors.green : Colors.orange,
-                          ),
-                          title: Text(log.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text(log.description, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // GATEKEEPER: Tombol Edit
-                              if (AccessControlService.canPerform(role, AccessControlService.actionUpdate, isOwner: isOwner))
-                                IconButton(
-                                  icon: const Icon(Icons.edit, color: Colors.blue),
-                                  onPressed: () => _goToEditor(log: log, index: index),
-                                ),
-                              
-                              // GATEKEEPER: Tombol Delete
-                              if (AccessControlService.canPerform(role, AccessControlService.actionDelete, isOwner: isOwner))
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => _showDeleteConfirmation(log),
-                                ),
-                            ],
-                          ),
+                    return Card(
+                      color: _getCategoryColor(log.category),
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      child: ListTile(
+                        leading: Icon(
+                          log.id != null
+                              ? Icons.cloud_done
+                              : Icons.cloud_upload_outlined,
+                          color: log.id != null ? Colors.green : Colors.orange,
                         ),
-                      );
-                    },
-                  ),
+                        title: Text(
+                          log.title,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          "${log.isPublic ? "🌐 Publik" : "🔒 Privat"} • ${log.category}",
+                          style: TextStyle(color: Colors.grey.shade800),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (AccessControlService.canPerform(
+                              role,
+                              'update',
+                              isOwner: isOwner,
+                            ))
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit,
+                                  color: Colors.blue,
+                                ),
+                                onPressed: () => _goToEditor(log: log),
+                              ),
+                            if (AccessControlService.canPerform(
+                              role,
+                              'delete',
+                              isOwner: isOwner,
+                            ))
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () => _controller.removeLog(log),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
@@ -164,48 +197,6 @@ class _LogViewState extends State<LogView> {
       floatingActionButton: FloatingActionButton(
         onPressed: () => _goToEditor(),
         child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-  // --- Dialog Helpers ---
-  void _showDeleteConfirmation(LogModel log) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Hapus Catatan"),
-        content: const Text("Tindakan ini tidak dapat dibatalkan."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
-          TextButton(
-            onPressed: () async {
-              await _controller.removeLog(log);
-              if (mounted) Navigator.pop(context);
-            },
-            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showLogoutConfirmation() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Logout"),
-        content: const Text("Apakah Anda yakin ingin keluar?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
-          TextButton(
-            onPressed: () => Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => const LoginView()),
-              (route) => false,
-            ),
-            child: const Text("Keluar", style: TextStyle(color: Colors.red)),
-          ),
-        ],
       ),
     );
   }

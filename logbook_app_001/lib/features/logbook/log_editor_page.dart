@@ -5,14 +5,12 @@ import 'package:logbook_app_001/features/logbook/log_controller.dart';
 
 class LogEditorPage extends StatefulWidget {
   final LogModel? log;
-  final int? index;
   final LogController controller;
   final dynamic currentUser;
 
   const LogEditorPage({
     super.key,
     this.log,
-    this.index,
     required this.controller,
     required this.currentUser,
   });
@@ -24,6 +22,10 @@ class LogEditorPage extends StatefulWidget {
 class _LogEditorPageState extends State<LogEditorPage> {
   late TextEditingController _titleController;
   late TextEditingController _descController;
+  String _selectedCategory = 'Software';
+  bool _isPublic = false;
+
+  final List<String> _categories = ['Mechanical', 'Electronic', 'Software'];
 
   @override
   void initState() {
@@ -32,30 +34,31 @@ class _LogEditorPageState extends State<LogEditorPage> {
     _descController = TextEditingController(
       text: widget.log?.description ?? '',
     );
+    if (widget.log != null) {
+      _selectedCategory = widget.log!.category;
+      _isPublic = widget.log!.isPublic;
+    }
 
-    // TAMBAHKAN INI: Listener agar Pratinjau terupdate otomatis
-    _descController.addListener(() {
-      setState(() {});
-    });
+    _descController.addListener(() => setState(() {}));
   }
 
   void _save() {
+    if (_titleController.text.isEmpty) return;
+
     if (widget.log == null) {
-      // Tambah Baru
       widget.controller.addLog(
-        _titleController.text,
-        _descController.text,
-        widget.currentUser['uid'],
-        widget.currentUser['teamId'],
-        DateTime.now().toString(),
+        title: _titleController.text,
+        description: _descController.text,
+        category: _selectedCategory,
+        isPublic: _isPublic,
       );
     } else {
-      // Update
       widget.controller.updateLog(
-        widget.log!,
-        _titleController.text,
-        _descController.text,
-        widget.currentUser['uid'],
+        oldLog: widget.log!,
+        newTitle: _titleController.text,
+        newDesc: _descController.text,
+        newCategory: _selectedCategory,
+        newIsPublic: _isPublic,
       );
     }
     Navigator.pop(context);
@@ -63,7 +66,6 @@ class _LogEditorPageState extends State<LogEditorPage> {
 
   @override
   void dispose() {
-    // JANGAN LUPA: Bersihkan controller agar tidak memory leak
     _titleController.dispose();
     _descController.dispose();
     super.dispose();
@@ -86,14 +88,41 @@ class _LogEditorPageState extends State<LogEditorPage> {
         ),
         body: TabBarView(
           children: [
-            // Tab 1: Editor
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
                   TextField(
                     controller: _titleController,
-                    decoration: const InputDecoration(labelText: "Judul"),
+                    decoration: const InputDecoration(
+                      labelText: "Judul",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      DropdownButton<String>(
+                        value: _selectedCategory,
+                        items: _categories
+                            .map(
+                              (c) => DropdownMenuItem(value: c, child: Text(c)),
+                            )
+                            .toList(),
+                        onChanged: (val) =>
+                            setState(() => _selectedCategory = val!),
+                      ),
+                      Row(
+                        children: [
+                          const Text("Publik?"),
+                          Switch(
+                            value: _isPublic,
+                            onChanged: (val) => setState(() => _isPublic = val),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   Expanded(
@@ -101,18 +130,19 @@ class _LogEditorPageState extends State<LogEditorPage> {
                       controller: _descController,
                       maxLines: null,
                       expands: true,
-                      keyboardType: TextInputType.multiline,
                       decoration: const InputDecoration(
-                        hintText: "Tulis laporan dengan format Markdown...",
-                        border: InputBorder.none,
+                        hintText: "Tulis dengan format Markdown...",
+                        border: OutlineInputBorder(),
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-            // Tab 2: Markdown Preview
-            Markdown(data: _descController.text),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: MarkdownBody(data: _descController.text),
+            ),
           ],
         ),
       ),

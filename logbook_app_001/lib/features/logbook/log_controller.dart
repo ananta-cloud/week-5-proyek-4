@@ -1,151 +1,187 @@
 import 'package:flutter/material.dart';
-import 'package:mongo_dart/mongo_dart.dart' show ObjectId, where;
-import 'package:logbook_app_001/features/models/log_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:mongo_dart/mongo_dart.dart' show ObjectId, where;
+
+// Pastikan import path sesuai dengan struktur folder proyek Anda
+import 'package:logbook_app_001/features/models/log_model.dart';
 import 'package:logbook_app_001/services/mongo_service.dart';
-import 'package:logbook_app_001/services/access_control_services.dart' as access_control;
+import 'package:logbook_app_001/services/access_control_services.dart';
 import 'package:logbook_app_001/helpers/log_helper.dart';
 
 class LogController {
-  // Notifier untuk UI
+  // Notifier untuk reaktivitas UI
   final ValueNotifier<List<LogModel>> logsNotifier = ValueNotifier<List<LogModel>>([]);
   final ValueNotifier<List<LogModel>> filteredLogsNotifier = ValueNotifier<List<LogModel>>([]);
-
-  // Akses Box Hive
+  
+  // Akses ke Hive Box untuk Local Persistence (Offline-First)
   final Box<LogModel> _logBox = Hive.box<LogModel>('offline_logs');
 
-  // Identitas User
-  String userId = "";
+  // Identitas Pengguna & State Pencarian
+  String currentUserId = "";
+  String currentTeamId = "";
   String userRole = "";
   String lastQuery = "";
 
   LogController() {
-    // Memastikan setiap perubahan pada list utama akan otomatis mengupdate list filter
-    logsNotifier.addListener(() => _applyFilter());
+    // Listener: Setiap ada perubahan data utama, otomatis jalankan filter
+    logsNotifier.addListener(() => _applyFilters());
   }
+
+  // ==========================================
+  // FITUR PENCARIAN & PRIVASI (HOMEWORK & TASK 5)
+  // ==========================================
 
   void searchLogs(String query) {
-    lastQuery = query;
-    _applyFilter();
+    lastQuery = query.toLowerCase();
+    _applyFilters();
   }
 
-  void _applyFilter() {
-    if (lastQuery.isEmpty) {
-      filteredLogsNotifier.value = logsNotifier.value;
-    } else {
-      filteredLogsNotifier.value = logsNotifier.value
-          .where(
-            (log) =>
-                log.title.toLowerCase().contains(lastQuery.toLowerCase()) ||
-                log.description.toLowerCase().contains(lastQuery.toLowerCase()),
-          )
-          .toList();
+  void _applyFilters() {
+    // 1. FILTER VISIBILITAS PRIVASI (Sovereignty)
+    // Tampilkan jika: User adalah pemilik catatan ATAU catatan di-set Public
+    List<LogModel> visibleLogs = logsNotifier.value.where((log) {
+      return log.authorId == currentUserId || log.isPublic == true;
+    }).toList();
+
+    // 2. FILTER PENCARIAN (Search bar)
+    if (lastQuery.isNotEmpty) {
+      visibleLogs = visibleLogs.where((log) => 
+        log.title.toLowerCase().contains(lastQuery) || 
+        log.description.toLowerCase().contains(lastQuery)
+      ).toList();
     }
+
+    // Update UI
+    filteredLogsNotifier.value = visibleLogs;
   }
 
-  Future<void> syncLog(LogModel log) async {
-    await _logBox.add(log); // Simpan lokal dulu
-    try {
-      await MongoService().insertLog(log); 
-      await LogHelper.writeLog("Sync Success", source: "SyncManager");
-    } catch (e) {
-      await LogHelper.writeLog("Offline Mode: Data saved locally", level: 3);
-    }
-  }
+  // ==========================================
+  // CRUD & SYNC MANAGER (TASK 2 & TASK 4)
+  // ==========================================
 
-  // --- CRUD OPERATIONS ---
+  /// LOAD DATA: Optimistic Loading (Local First -> Cloud Background)
+  Future<void> loadLogs(String teamId, String userId, String role) async {
+    currentTeamId = teamId;
+    currentUserId = userId;
+    userRole = role;
 
-  Future<void> loadLogs(String userTeamId) async {
+    // 1. Tampilkan data lokal secepat mungkin
+    final localData = _logBox.values.where((log) => log.teamId == teamId).toList();
+    logsNotifier.value = localData;
+
     try {
-      // 1. Ambil data mentah (List of Map) dari MongoDB
+      // 2. Cek apakah ada data lokal yang BELUM tersinkron (isSynced == false)
+      final pendingLogs = localData.where((log) => !log.isSynced).toList();
+      
+      // 3. Jika ada, push ke Cloud DULU sebelum mengambil data baru
+      if (pendingLogs.isNotEmpty) {
+        await LogHelper.writeLog("Mencoba sinkronisasi ${pendingLogs.length} data tertunda...", level: 2);
+        for (var log in pendingLogs) {
+          try {
+            // Buat salinan log dengan status isSynced = true
+            final syncedLog = LogModel(
+              id: log.id, title: log.title, description: log.description, 
+              date: log.date, authorId: log.authorId, teamId: log.teamId, 
+              category: log.category, isPublic: log.isPublic, isSynced: true
+            );
+            
+            await MongoService().insertLog(syncedLog);
+            
+            // Update status di Hive lokal
+            final key = _logBox.keys.firstWhere((k) => _logBox.get(k)?.id == log.id);
+            await _logBox.put(key, syncedLog);
+          } catch (e) {
+            await LogHelper.writeLog("Gagal push data tertunda: $e", level: 1);
+          }
+        }
+      }
+
+      // 4. Setelah push selesai, baru tarik data terbaru dari Cloud
       final List<Map<String, dynamic>> data = await MongoService().db!
-          .collection('logs')
-          .find(where.eq('teamId', userTeamId))
-          .toList();
+          .collection('logs').find(where.eq('teamId', teamId)).toList();
 
-      // 2. Ubah List<Map> menjadi List<LogModel>
-      final List<LogModel> cloudLogs = data
-          .map((json) => LogModel.fromJson(json))
-          .toList();
+      final List<LogModel> cloudLogs = data.map((json) {
+        var log = LogModel.fromMap(json);
+        // Pastikan data dari cloud ditandai sebagai sudah sinkron
+        return LogModel(
+              id: log.id, title: log.title, description: log.description, 
+              date: log.date, authorId: log.authorId, teamId: log.teamId, 
+              category: log.category, isPublic: log.isPublic, isSynced: true
+        );
+      }).toList();
 
-      // 3. Update Notifier dan Hive
-      logsNotifier.value = cloudLogs;
-
+      // 5. Update Hive dengan data Cloud yang benar-benar sinkron
       await _logBox.clear();
       await _logBox.addAll(cloudLogs);
-
-      _applyFilter();
-      await LogHelper.writeLog(
-        "SUCCESS: Memuat ${cloudLogs.length} data tim.",
-        source: "log_controller.dart",
-      );
+      logsNotifier.value = cloudLogs;
+      
     } catch (e) {
-      // Jika offline, ambil dari Hive yang sudah difilter berdasarkan teamId
-      logsNotifier.value = _logBox.values
-          .where((log) => log.teamId == userTeamId)
-          .toList();
-      _applyFilter();
       await LogHelper.writeLog("OFFLINE: Memuat data lokal - $e", level: 2);
     }
   }
 
-  /// ADD DATA
-  Future<void> addLog(
-    String title,
-    String desc,
-    String kategori, // PERBAIKAN: Kategori ditambahkan
-    String authorId,
-    String teamId,
-  ) async {
-    final newLog = LogModel(
-      id: ObjectId(), 
-      title: title,
-      description: desc,
-      date: DateTime.now(),
-      authorId: authorId,
-      teamId: teamId,
+  /// ADD DATA: Simpan ke Hive Instan, Upload ke Cloud di Background
+  Future<void> addLog({
+    required String title, required String description, 
+    required String category, required bool isPublic,
+  }) async {
+    // Awalnya kita anggap belum sinkron
+    var newLog = LogModel(
+      id: ObjectId().oid, title: title, description: description,
+      date: DateTime.now().toIso8601String(), authorId: currentUserId,
+      teamId: currentTeamId, category: category, isPublic: isPublic,
+      isSynced: false, // TANDAI BELUM SINKRON
     );
 
-    // ACTION 1: Simpan ke Hive (Instan)
+    // Simpan ke Hive Instan
     await _logBox.add(newLog);
-    logsNotifier.value = [...logsNotifier.value, newLog];
+    _updateLocalList();
 
-    // ACTION 2: Kirim ke MongoDB Atlas (Background)
     try {
+      // Coba upload ke Cloud
       await MongoService().insertLog(newLog);
-      await LogHelper.writeLog(
-        "SUCCESS: Data tersinkron ke Cloud",
-        source: "log_controller.dart",
+      
+      // Jika berhasil, update status isSynced di Hive menjadi true
+      final syncedLog = LogModel(
+        id: newLog.id, title: newLog.title, description: newLog.description,
+        date: newLog.date, authorId: newLog.authorId, teamId: newLog.teamId,
+        category: newLog.category, isPublic: newLog.isPublic, isSynced: true
       );
+      
+      final key = _logBox.keys.firstWhere((k) => _logBox.get(k)?.id == newLog.id);
+      await _logBox.put(key, syncedLog);
+      _updateLocalList();
+      
+      await LogHelper.writeLog("SUCCESS: Data tersinkron ke Cloud");
     } catch (e) {
-      await LogHelper.writeLog(
-        "WARNING: Data tersimpan lokal, akan sinkron saat online",
-        level: 1,
-      );
+      await LogHelper.writeLog("WARNING: Offline, data antre untuk disinkron", level: 1);
     }
   }
 
-  /// UPDATE DATA (PERBAIKAN: Gunakan LogModel lama, bukan index)
-  Future<void> updateLog(
-    LogModel oldLog,
-    String newTitle,
-    String newDesc,
-    String tempKategori,
-  ) async {
+  /// UPDATE DATA: Perbarui Hive dan Cloud
+  Future<void> updateLog({
+    required LogModel oldLog,
+    required String newTitle,
+    required String newDesc,
+    required String newCategory,
+    required bool newIsPublic,
+  }) async {
     final updatedLog = LogModel(
       id: oldLog.id,
       title: newTitle,
       description: newDesc,
-      date: DateTime.now(),
+      date: DateTime.now().toIso8601String(),
       authorId: oldLog.authorId,
       teamId: oldLog.teamId,
+      category: newCategory,
+      isPublic: newIsPublic,
     );
 
     try {
-      // Update MongoDB
+      // 1. Update ke Cloud
       await MongoService().updateLog(updatedLog);
 
-      // Update Hive (Cari key secara akurat berdasarkan ID)
+      // 2. Update ke Hive lokal
       final dynamic key = _logBox.keys.firstWhere(
         (k) => _logBox.get(k)?.id == oldLog.id,
         orElse: () => null,
@@ -160,15 +196,13 @@ class LogController {
     }
   }
 
-  /// REMOVE DATA
+  /// REMOVE DATA: Hapus dari Hive dan Cloud dengan Gatekeeper Security
   Future<void> removeLog(LogModel targetLog) async {
-    // 1. Security Check
-    bool isOwner = targetLog.authorId == userId;
+    // 1. Security Check (Gatekeeper lapis kedua)
+    bool isOwner = targetLog.authorId == currentUserId;
     
-    // PERBAIKAN: Pemanggilan AccessControl yang benar menggunakan Alias
-    if (!access_control.AccessControlService.canPerform(
-        userRole, access_control.AccessControlService.actionDelete, isOwner: isOwner)) {
-      await LogHelper.writeLog("SECURITY: Unauthorized Delete", level: 1);
+    if (!AccessControlService.canPerform(userRole, AccessControlService.actionDelete, isOwner: isOwner)) {
+      await LogHelper.writeLog("SECURITY BREACH: Unauthorized Delete Attempt", level: 1);
       return;
     }
 
@@ -178,7 +212,7 @@ class LogController {
       // 2. Hapus di Cloud
       await MongoService().deleteLog(targetLog.id!);
 
-      // 3. Hapus di Hive
+      // 3. Hapus di Hive lokal
       final Map<dynamic, LogModel> map = _logBox.toMap();
       final dynamic keyToDelete = map.keys.firstWhere(
         (k) => map[k]?.id == targetLog.id,
@@ -196,21 +230,11 @@ class LogController {
     }
   }
 
-  // --- PERSISTENCE ---
+  // ==========================================
+  // HELPER METHODS
+  // ==========================================
 
   void _updateLocalList() {
-    logsNotifier.value = _logBox.values.toList();
-  }
-
-  Future<void> loadFromDisk(String userTeamId) async {
-    try {
-      _updateLocalList();
-      final cloudData = await MongoService().getLogs(userTeamId);
-      await _logBox.clear();
-      await _logBox.addAll(cloudData);
-      _updateLocalList();
-    } catch (e) {
-      await LogHelper.writeLog("INFO: Berjalan dalam mode Offline", level: 2);
-    }
+    logsNotifier.value = _logBox.values.where((log) => log.teamId == currentTeamId).toList();
   }
 }
