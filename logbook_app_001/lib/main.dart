@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'features/onboarding/onboarding_view.dart';
 import 'package:logbook_app_001/features/models/log_model.dart';
+import 'services/hive_service.dart';
 
 void main() async {
   // Wajib untuk operasi asinkron sebelum runApp

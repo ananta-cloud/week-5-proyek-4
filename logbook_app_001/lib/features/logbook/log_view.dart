@@ -6,6 +6,7 @@ import 'package:logbook_app_001/services/access_control_services.dart';
 import 'package:logbook_app_001/features/logbook/log_editor_page.dart';
 import 'package:logbook_app_001/features/auth/login_view.dart';
 import 'package:logbook_app_001/services/mongo_service.dart';
+import 'package:logbook_app_001/services/hive_service.dart';
 import 'package:logbook_app_001/features/widgets/search_log.dart';
 
 class LogView extends StatefulWidget {
@@ -25,17 +26,25 @@ class _LogViewState extends State<LogView> {
     super.initState();
     _controller = LogController();
 
-    // Inisialisasi data berdasarkan pengguna yang login
+    // Ambil data user dengan aman
     String teamId = widget.currentUser['teamId'] ?? "";
     String uid = widget.currentUser['uid'] ?? "";
     String role = widget.currentUser['role'] ?? "Anggota";
 
     _initDatabase(teamId, uid, role);
 
-    // Listener untuk update ikon cloud secara real-time
-    MongoService().isOnline.addListener(() {
-      if (mounted) setState(() {});
-    });
+    // Listener untuk koneksi
+    MongoService().isOnline.addListener(_onConnectionChanged);
+  }
+
+  @override
+  void dispose() {
+    MongoService().isOnline.removeListener(_onConnectionChanged);
+    super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _initDatabase(String teamId, String uid, String role) async {
@@ -43,13 +52,41 @@ class _LogViewState extends State<LogView> {
       final String? mongoUri = dotenv.env['MONGODB_URI'];
       if (mongoUri != null) {
         await MongoService().connect(mongoUri);
+        // Jalankan sinkronisasi setelah terhubung ke cloud
+        await HiveService.syncData();
       }
     } catch (e) {
-      print("Koneksi cloud gagal, beralih ke offline penuh");
+      debugPrint("Koneksi cloud gagal: $e");
     } finally {
-      // Selalu muat data lokal (Offline-First)
-      _controller.loadLogs(teamId, uid, role);
+      // Selalu muat data lokal agar UI tidak kosong (Offline-First)
+      await _controller.loadLogs(teamId, uid, role);
     }
+  }
+
+  void _confirmDelete(LogModel log) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Hapus Logbook?"),
+        content: const Text("Tindakan ini akan menghapus data secara permanen dari lokal dan cloud."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Batal"),
+          ),
+          TextButton(
+            onPressed: () async {
+              await _controller.removeLog(log);
+              if (mounted) Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Log berhasil dihapus")),
+              );
+            },
+            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _goToEditor({LogModel? log}) {
@@ -65,22 +102,19 @@ class _LogViewState extends State<LogView> {
     );
   }
 
-  Color _getCategoryColor(String category) {
+  Color _getCategoryColor(String? category) {
     switch (category) {
-      case 'Mechanical':
-        return Colors.green.shade100;
-      case 'Electronic':
-        return Colors.blue.shade100;
-      case 'Software':
-        return Colors.purple.shade100;
-      default:
-        return Colors.grey.shade100;
+      case 'Mechanical': return Colors.green.shade50;
+      case 'Electronic': return Colors.blue.shade50;
+      case 'Software': return Colors.purple.shade50;
+      default: return Colors.white;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final String role = widget.currentUser['role'] ?? 'Anggota';
+    final String currentUid = widget.currentUser['uid'] ?? '';
 
     return Scaffold(
       appBar: AppBar(
@@ -91,18 +125,20 @@ class _LogViewState extends State<LogView> {
             icon: const Icon(Icons.refresh),
             onPressed: () => _controller.loadLogs(
               widget.currentUser['teamId'],
-              widget.currentUser['uid'],
+              currentUid,
               role,
             ),
           ),
           ValueListenableBuilder<bool>(
             valueListenable: MongoService().isOnline,
-            builder: (context, online, _) => Icon(
-              online ? Icons.cloud_done : Icons.cloud_off,
-              color: online ? Colors.green : Colors.red,
+            builder: (context, online, _) => Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Icon(
+                online ? Icons.cloud_done : Icons.cloud_off,
+                color: online ? Colors.green : Colors.red,
+              ),
             ),
           ),
-          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () => Navigator.pushAndRemoveUntil(
@@ -122,66 +158,70 @@ class _LogViewState extends State<LogView> {
               builder: (context, logs, child) {
                 if (logs.isEmpty) {
                   return const Center(
-                    child: Text(
-                      "Belum ada aktivitas hari ini? Mulai catat kemajuan Anda!",
-                    ),
+                    child: Text("Belum ada aktivitas. Mulai catat sekarang!"),
                   );
                 }
 
                 return ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 80),
                   itemCount: logs.length,
                   itemBuilder: (context, index) {
                     final log = logs[index];
-                    final bool isOwner =
-                        log.authorId == widget.currentUser['uid'];
+                    final bool isOwner = log.authorId == currentUid;
+                    final bool isPublic = log.isPublic;
 
                     return Card(
                       color: _getCategoryColor(log.category),
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
+                      elevation: 2,
+                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       child: ListTile(
-                        leading: Icon(
-                          log.id != null
-                              ? Icons.cloud_done
-                              : Icons.cloud_upload_outlined,
-                          color: log.id != null ? Colors.green : Colors.orange,
+                        leading: CircleAvatar(
+                          backgroundColor: log.isSynced ? Colors.green : Colors.orange,
+                          child: Icon(
+                            log.isSynced ? Icons.check : Icons.upload,
+                            color: Colors.white,
+                          ),
                         ),
                         title: Text(
                           log.title,
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        subtitle: Text(
-                          "${log.isPublic ? "🌐 Publik" : "🔒 Privat"} • ${log.category}",
-                          style: TextStyle(color: Colors.grey.shade800),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(log.description, maxLines: 2, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            Text(
+                              "${isPublic ? "🌐 Publik" : "🔒 Privat"} • ${log.category}",
+                              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                            ),
+                          ],
                         ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            // EDIT BUTTON
                             if (AccessControlService.canPerform(
                               role,
-                              'update',
+                              AccessControlService.actionUpdate,
                               isOwner: isOwner,
+                              isPublic: isPublic,
                             ))
                               IconButton(
-                                icon: const Icon(
-                                  Icons.edit,
-                                  color: Colors.blue,
-                                ),
+                                icon: const Icon(Icons.edit, color: Colors.blue),
                                 onPressed: () => _goToEditor(log: log),
                               ),
+
+                            // DELETE BUTTON
                             if (AccessControlService.canPerform(
                               role,
-                              'delete',
+                              AccessControlService.actionDelete,
                               isOwner: isOwner,
+                              isPublic: isPublic,
                             ))
                               IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () => _controller.removeLog(log),
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => _confirmDelete(log),
                               ),
                           ],
                         ),

@@ -128,7 +128,7 @@ class LogController {
     // Awalnya kita anggap belum sinkron
     var newLog = LogModel(
       id: ObjectId().oid, title: title, description: description,
-      date: DateTime.now().toIso8601String(), authorId: currentUserId,
+      date: DateTime.now(), authorId: currentUserId,
       teamId: currentTeamId, category: category, isPublic: isPublic,
       isSynced: false, // TANDAI BELUM SINKRON
     );
@@ -170,7 +170,7 @@ class LogController {
       id: oldLog.id,
       title: newTitle,
       description: newDesc,
-      date: DateTime.now().toIso8601String(),
+      date: DateTime.now(),
       authorId: oldLog.authorId,
       teamId: oldLog.teamId,
       category: newCategory,

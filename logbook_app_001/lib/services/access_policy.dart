@@ -1,16 +1,23 @@
 import 'package:logbook_app_001/features/models/log_model.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 class AccessPolicy {
-  // Template ini mudah dikembangkan: tinggal tambah baris 'case' baru
-  static bool canPerform(String role, String action) {
-    switch (role) {
-      case 'Ketua':
-        return true; // Ketua bisa semua (Full CRUD)
-      case 'Anggota':
-        // Anggota hanya bisa Create dan Read
-        return ['create', 'read'].contains(action);
-      default:
-        return false;
+  static bool canEdit(String userRole, String userId, LogModel log) {
+    // 1. Jika dia Ketua, dia bisa edit SEMUA log yang publik
+    if (userRole == 'Ketua' && log.isPublic) {
+      return true;
     }
+
+    // 2. Jika dia pemilik log tersebut (baik Ketua maupun Anggota)
+    if (log.authorId == userId) {
+      return true;
+    }
+
+    // 3. Selain itu, tidak punya akses edit
+    return false;
+  }
+
+  static bool canDelete(String userRole, String userId, LogModel log) {
+    // Biasanya hapus lebih ketat, hanya Ketua atau Pemilik
+    return userRole == 'Ketua' || log.authorId == userId;
   }
 }
