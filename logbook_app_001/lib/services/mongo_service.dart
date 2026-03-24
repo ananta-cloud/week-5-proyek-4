@@ -15,24 +15,32 @@ class MongoService {
   // Definisi source untuk LogHelper
   static const String _source = "mongo_service.dart"; 
 
+  // lib/services/mongo_service.dart
+
   Future<void> connect(String uri) async {
-    if (db != null && db!.state == mongo.State.OPEN) {
-      return;
-    }
-    
     try {
+      // 1. BERSIHKAN "ZOMBIE CONNECTION" 
+      // Tutup paksa koneksi lama yang nyangkut saat offline
+      if (db != null) {
+        try {
+          await db!.close();
+        } catch (_) {}
+        db = null; 
+      }
+
+      // 2. BUAT KONEKSI BARU YANG SEGAR
       db = await Db.create(uri);
-      // PERBAIKAN: Pindahkan timeout ke sini agar dibatalkan secara bersih
       await db!.open().timeout(const Duration(seconds: 10)); 
       
-      isOnline.value = true;
-      await LogHelper.writeLog("DATABASE: Berhasil terhubung", source: _source, level: 2);
+      // 3. UPDATE UI MENJADI ONLINE (Bar Hijau)
+      isOnline.value = true; 
+      await LogHelper.writeLog("DATABASE: Berhasil terhubung kembali", level: 2);
+
     } catch (e) {
+      // 4. JIKA GAGAL, TETAPKAN SEBAGAI OFFLINE (Bar Oranye)
       isOnline.value = false;
-      db = null; // WAJIB: Reset ke null agar query tidak nyangkut menjadi Infinite Loop
-      
-      await LogHelper.writeLog("ERROR: Gagal terhubung - $e", source: _source, level: 1);
-      throw Exception("Gagal terhubung ke MongoDB: $e");
+      db = null; 
+      await LogHelper.writeLog("ERROR: Gagal terhubung - $e", level: 1);
     }
   }
 

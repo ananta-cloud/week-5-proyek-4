@@ -2,19 +2,30 @@ import 'package:hive/hive.dart';
 import 'dart:convert';
 import 'package:mongo_dart/mongo_dart.dart' show ObjectId;
 
-part 'log_model.g.dart'; 
+part 'log_model.g.dart';
 
-@HiveType(typeId: 0) 
+@HiveType(typeId: 0)
 class LogModel extends HiveObject {
-  @HiveField(0) final String? id;
-  @HiveField(1) final String title;
-  @HiveField(2) final String description;
-  @HiveField(3) final DateTime date;
-  @HiveField(4) final String authorId; 
-  @HiveField(5) final String teamId;   
-  @HiveField(6) final bool isPublic;  
-  @HiveField(7) final String category; 
-  @HiveField(8) bool isSynced;
+  @HiveField(0)
+  final String? id;
+  @HiveField(1)
+  final String title;
+  @HiveField(2)
+  final String description;
+  @HiveField(3)
+  final DateTime date;
+  @HiveField(4)
+  final String authorId;
+  @HiveField(5)
+  final String teamId;
+  @HiveField(6)
+  final bool isPublic;
+  @HiveField(7)
+  final String category;
+  @HiveField(8)
+  bool isSynced;
+  @HiveField(9)
+  bool isDeleted;
 
   LogModel({
     this.id,
@@ -23,9 +34,10 @@ class LogModel extends HiveObject {
     required this.date,
     required this.authorId,
     required this.teamId,
-    this.isPublic = false, // Default private 
+    this.isPublic = false, // Default private
     this.category = 'Software', // Default kategori
     this.isSynced = true,
+    this.isDeleted = false,
   });
 
   Map<String, dynamic> toMap() => {
