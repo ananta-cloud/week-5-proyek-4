@@ -14,7 +14,6 @@ class _OnboardingViewState extends State<OnboardingView> {
     {
       "title": "Selamat Datang!",
       "desc": "Aplikasi pencatat counter terbaik untuk produktivitas Anda.",
-      // "image": "assets/image/first-page.png",
       "image": "lib/assets/gif/first.gif",
     },
     {

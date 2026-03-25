@@ -25,15 +25,15 @@ class EmptyLog extends StatelessWidget {
               isSearchMode
                   ? "Tidak ada hasil untuk '$searchQuery'"
                   : "Belum ada catatan",
-              textAlign: TextAlign.center, // Membuat teks ke tengah
+              textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8), // Jarak antar baris teks
+            const SizedBox(height: 8), 
             Text(
               isSearchMode
                   ? "Coba gunakan kata kunci lain atau pastikan ejaan benar."
                   : "Mulai buat catatan dengan menekan tombol tambah!",
-              textAlign: TextAlign.center, // Membuat teks ke tengah
+              textAlign: TextAlign.center, 
               style: const TextStyle(color: Colors.grey, fontSize: 14),
             ),
           ],

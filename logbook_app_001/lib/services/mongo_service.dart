@@ -11,15 +11,11 @@ class MongoService {
 
   Db? db;
   final ValueNotifier<bool> isOnline = ValueNotifier<bool>(false);
-  
-  // Definisi source untuk LogHelper
-  static const String _source = "mongo_service.dart"; 
 
-  // lib/services/mongo_service.dart
+  static const String _source = "mongo_service.dart"; 
 
   Future<void> connect(String uri) async {
     try {
-      // 1. BERSIHKAN "ZOMBIE CONNECTION" 
       // Tutup paksa koneksi lama yang nyangkut saat offline
       if (db != null) {
         try {
@@ -28,16 +24,16 @@ class MongoService {
         db = null; 
       }
 
-      // 2. BUAT KONEKSI BARU YANG SEGAR
+      // BUAT KONEKSI BARU YANG SEGAR
       db = await Db.create(uri);
       await db!.open().timeout(const Duration(seconds: 10)); 
       
-      // 3. UPDATE UI MENJADI ONLINE (Bar Hijau)
+      // UPDATE UI MENJADI ONLINE (Bar Hijau)
       isOnline.value = true; 
       await LogHelper.writeLog("DATABASE: Berhasil terhubung kembali", level: 2);
 
     } catch (e) {
-      // 4. JIKA GAGAL, TETAPKAN SEBAGAI OFFLINE (Bar Oranye)
+      // JIKA GAGAL, TETAPKAN SEBAGAI OFFLINE (Bar Oranye)
       isOnline.value = false;
       db = null; 
       await LogHelper.writeLog("ERROR: Gagal terhubung - $e", level: 1);
@@ -93,7 +89,7 @@ class MongoService {
     if (db != null) {
       await db!.close();
       db = null;
-      isOnline.value = false; // Pastikan state UI berubah menjadi merah (cloud_off)
+      isOnline.value = false;
       
       await LogHelper.writeLog(
         "DATABASE: Koneksi ditutup",

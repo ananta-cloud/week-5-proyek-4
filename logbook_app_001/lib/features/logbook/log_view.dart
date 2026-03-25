@@ -121,7 +121,6 @@ class _LogViewState extends State<LogView> with SingleTickerProviderStateMixin {
       appBar: AppBar(
         title: const Text("Logbook"),
         actions: [
-          // Icon Refresh Berputar Otomatis
           ValueListenableBuilder<bool>(
             valueListenable: _controller.isSyncingNotifier,
             builder: (context, syncing, _) {
@@ -143,9 +142,6 @@ class _LogViewState extends State<LogView> with SingleTickerProviderStateMixin {
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () {
-              // (Opsional) Tutup koneksi DB saat logout agar bersih
-              // MongoService().close();
-
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (context) => const LoginView()),
@@ -277,7 +273,7 @@ class _LogViewState extends State<LogView> with SingleTickerProviderStateMixin {
         ),
         child: const Icon(Icons.add),
       )
-    : null, // Jika bukan Ketua/Anggota (misal: Tamu), tombol tidak akan muncul
+    : null, // Jika bukan Ketua/Anggota, tombol tidak akan muncul
     );
   }
 }

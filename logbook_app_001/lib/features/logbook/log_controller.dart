@@ -10,14 +10,12 @@ import 'package:logbook_app_001/services/access_control_services.dart';
 import 'package:logbook_app_001/helpers/log_helper.dart';
 
 class LogController {
-  // Notifier untuk reaktivitas UI
   final ValueNotifier<List<LogModel>> logsNotifier =
       ValueNotifier<List<LogModel>>([]);
   final ValueNotifier<List<LogModel>> filteredLogsNotifier =
       ValueNotifier<List<LogModel>>([]);
   final ValueNotifier<bool> isSyncingNotifier = ValueNotifier<bool>(false);
-
-  // Akses ke Hive Box
+  // HiveBox
   final Box<LogModel> _logBox = Hive.box<LogModel>('offline_logs');
 
   String currentUserId = "";
@@ -26,22 +24,17 @@ class LogController {
   String lastQuery = "";
 
   LogController() {
-    // REAKTIF: Deteksi perubahan koneksi dengan lebih ketat
     Connectivity().onConnectivityChanged.listen((
       List<ConnectivityResult> results,
     ) {
-      // Cek apakah perangkat BENAR-BENAR offline
-      // (List kosong ATAU semua isinya adalah ConnectivityResult.none)
       bool isOffline =
           results.isEmpty ||
           results.every((result) => result == ConnectivityResult.none);
 
       if (isOffline) {
-        // Jika internet benar-benar mati, paksa status UI menjadi Offline
         MongoService().isOnline.value = false;
         debugPrint("KONEKSI TERPUTUS: Masuk ke Mode Offline");
       } else {
-        // Jika ada internet (WiFi / Mobile Data), coba reconnect
         _handleAutoReconnect();
       }
     });
@@ -54,11 +47,7 @@ class LogController {
 
     if (uri != null) {
       try {
-        // 1. Selalu coba hubungkan ulang ke MongoDB terlebih dahulu
         await MongoService().connect(uri);
-
-        // 2. Cek apakah benar-benar sudah online dan data user sudah ada
-        // Jika iya, jalankan animasi refresh berputar dan sinkronisasi
         if (MongoService().isOnline.value && currentTeamId.isNotEmpty) {
           await loadLogs(currentTeamId, currentUserId, userRole);
         }
@@ -71,7 +60,6 @@ class LogController {
   // Filter untuk Pencarian dan Privasi
   void _applyFilters() {
     List<LogModel> visibleLogs = logsNotifier.value.where((log) {
-      // Sembunyikan jika ditandai hapus secara lokal
       bool isNotDeleted = !log.isDeleted;
       bool hasAccess = log.authorId == currentUserId || log.isPublic == true;
       return hasAccess && isNotDeleted;
@@ -89,7 +77,6 @@ class LogController {
     filteredLogsNotifier.value = visibleLogs;
   }
 
-  /// LOAD & SYNC: Urutan PUSH (Lokal ke Cloud) -> PULL (Cloud ke Lokal)
   Future<void> loadLogs(String teamId, String userId, String role) async {
     currentTeamId = teamId;
     currentUserId = userId;
@@ -99,15 +86,12 @@ class LogController {
     _updateLocalList();
 
     try {
-      // FIX: Paksa MongoService untuk mencoba connect ulang setiap kali refresh ditekan
-      // Ini mencegah status 'stale' atau 'zombie connection'
       final String? uri = dotenv.env['MONGODB_URI'];
       if (uri != null) {
         await MongoService().connect(uri);
       }
 
       if (MongoService().db != null && MongoService().db!.isConnected) {
-        // 1. PUSH: Kirim data tertunda (Add/Update/Delete)
         final pendingLogs = _logBox.values
             .where((log) => !log.isSynced)
             .toList();
@@ -122,7 +106,6 @@ class LogController {
           }
         }
 
-        // 2. PULL: Ambil data terbaru
         final List<Map<String, dynamic>> data = await MongoService().getLogs(
           teamId,
         );
@@ -137,7 +120,6 @@ class LogController {
       }
     } catch (e) {
       debugPrint("Refresh Gagal: $e");
-      // Paksa isOnline menjadi false jika memang gagal connect
       MongoService().isOnline.value = false;
     } finally {
       isSyncingNotifier.value = false;
@@ -145,7 +127,6 @@ class LogController {
     }
   }
 
-  /// ADD: Simpan ke Hive (Instan) lalu Cloud (Background)
   Future<void> addLog({
     required String title,
     required String description,
@@ -177,7 +158,6 @@ class LogController {
     }
   }
 
-  /// UPDATE: Perbarui Lokal (Instan) lalu Cloud
   Future<void> updateLog({
     required LogModel oldLog,
     required String newTitle,
@@ -194,7 +174,7 @@ class LogController {
       teamId: oldLog.teamId,
       category: newCategory,
       isPublic: newIsPublic,
-      isSynced: false, // Tandai perlu sinkron ulang
+      isSynced: false, 
     );
 
     await _logBox.put(updatedLog.id, updatedLog);
@@ -210,7 +190,6 @@ class LogController {
     }
   }
 
-  /// REMOVE: Soft Delete (Tandai Hapus) agar ID tetap ada untuk sinkronisasi
   Future<void> removeLog(LogModel targetLog) async {
     bool isOwner = targetLog.authorId == currentUserId;
     if (!AccessControlService.canPerform(
@@ -226,15 +205,11 @@ class LogController {
     }
 
     try {
-      // Tandai hapus di lokal (UI akan langsung menyembunyikan karena filter)
       targetLog.isDeleted = true;
       targetLog.isSynced = false;
       await targetLog.save();
       _updateLocalList();
-
-      // Coba hapus di Cloud
       await MongoService().deleteLog(targetLog.id!);
-      // Jika berhasil, baru hapus permanen di lokal
       await targetLog.delete();
     } catch (e) {
       await LogHelper.writeLog(

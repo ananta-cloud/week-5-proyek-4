@@ -34,8 +34,8 @@ class LogModel extends HiveObject {
     required this.date,
     required this.authorId,
     required this.teamId,
-    this.isPublic = false, // Default private
-    this.category = 'Software', // Default kategori
+    this.isPublic = false, 
+    this.category = 'Software',
     this.isSynced = true,
     this.isDeleted = false,
   });

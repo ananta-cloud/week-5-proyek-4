@@ -13,7 +13,7 @@ void main() async {
 
   // INISIALISASI HIVE
   await Hive.initFlutter();
-  Hive.registerAdapter(LogModelAdapter()); // WAJIB: Sesuai nama di .g.dart
+  Hive.registerAdapter(LogModelAdapter()); 
   await Hive.openBox<LogModel>(
     'offline_logs',
   ); // Buka box sebelum Controller dipakai
@@ -29,7 +29,6 @@ class MyApp extends StatelessWidget {
       title: 'Logbook App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // PERBAIKAN: Menambahkan ColorScheme
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
