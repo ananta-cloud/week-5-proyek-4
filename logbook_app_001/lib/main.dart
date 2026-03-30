@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:logbook_app_001/features/auth/login_view.dart';
 import 'features/onboarding/onboarding_view.dart';
+import 'features/auth/login_controller.dart';
+import 'features/logbook/counter_view.dart';
 import 'package:logbook_app_001/features/models/log_model.dart';
 import 'services/hive_service.dart';
 
@@ -13,7 +16,7 @@ void main() async {
 
   // INISIALISASI HIVE
   await Hive.initFlutter();
-  Hive.registerAdapter(LogModelAdapter()); 
+  Hive.registerAdapter(LogModelAdapter());
   await Hive.openBox<LogModel>(
     'offline_logs',
   ); // Buka box sebelum Controller dipakai
@@ -25,6 +28,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dummyUser = User(username: "admin", password: "123", role: "admin"); // User dummy untuk testing
     return MaterialApp(
       title: 'Logbook App',
       debugShowCheckedModeBanner: false,
@@ -32,7 +36,8 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const OnboardingView(),
+      home: const LoginView(), 
+      // Ganti dengan OnboardingView() untuk memulai dari onboarding
     );
   }
 }

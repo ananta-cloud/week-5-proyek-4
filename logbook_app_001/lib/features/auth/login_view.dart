@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:logbook_app_001/features/logbook/counter_view.dart';
 import 'package:logbook_app_001/features/logbook/log_view.dart';
 import 'login_controller.dart';
 
@@ -24,16 +25,21 @@ class _LoginViewState extends State<LoginView> {
 
     if (user != null) {
       // Jika berhasil, bungkus data ke map (sesuai kebutuhan LogView kamu sebelumnya)
-      final currentUser = {
-        'uid': user.username.toLowerCase(),
-        'username': user.username,
-        'role': user.role,
-        'teamId': 'MEKTRA_KLP_01',
-      };
+      // final currentUser = {
+      //   'uid': user.username.toLowerCase(),
+      //   'username': user.username,
+      //   'role': user.role,
+      //   'teamId': 'MEKTRA_KLP_01',
+      // };
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => LogView(currentUser: currentUser)),
+        // MaterialPageRoute(builder: (context) => LogView(currentUser: currentUser)),
+        MaterialPageRoute(
+          builder: (context) => CounterView(
+            user: user,
+          ),
+        ),
       );
     } else {
       // Jika gagal, tampilkan pesan
